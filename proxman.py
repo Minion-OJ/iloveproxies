@@ -3,17 +3,19 @@ import aiohttp
 import aiofiles
 import os
 from aiohttp_socks import ProxyConnector
-from colorama import Fore, Style, init
+from colorama import Fore, init
 
 init(autoreset=True)
 
+# === Settings ===
 TMP_FOLDER = "proxy_tmp"
 os.makedirs(TMP_FOLDER, exist_ok=True)
 
-MAX_THREADS = 100
+GLOBAL_CONCURRENCY = 200  # <== HARD LIMIT on overall proxy concurrency
 TIMEOUT = 5
 DEFAULT_TEST_URL = "http://example.com"
 
+# === Hardcoded Source List ===
 HARDCODED_LINKS = {
     "http": [
         "https://raw.githubusercontent.com/FifzzSENZE/Master-Proxy/master/proxies/http.txt",
@@ -42,6 +44,7 @@ HARDCODED_LINKS = {
 }
 
 
+# === Downloader ===
 async def download_one(session, url):
     try:
         async with session.get(url, timeout=15) as resp:
@@ -49,7 +52,6 @@ async def download_one(session, url):
     except Exception as e:
         print(f"{Fore.RED}[!] Error downloading {url}: {e}")
         return ""
-
 
 async def download_all():
     results = {}
@@ -71,6 +73,7 @@ async def download_all():
     return results
 
 
+# === Proxy Test Helpers ===
 async def test_http(proxy):
     try:
         async with aiohttp.ClientSession() as session:
@@ -79,7 +82,6 @@ async def test_http(proxy):
     except:
         return False
 
-
 async def test_https(proxy):
     try:
         async with aiohttp.ClientSession() as session:
@@ -87,7 +89,6 @@ async def test_https(proxy):
                 return resp.status == 200
     except:
         return False
-
 
 async def test_socks(proxy, version):
     try:
@@ -98,51 +99,46 @@ async def test_socks(proxy, version):
     except:
         return False
 
+async def write_working(proxy, proto):
+    async with aiofiles.open(f"working_{proto}.txt", 'a') as f:
+        await f.write(proxy + "\n")
 
-async def validate_all(proxies_by_type):
-    semaphore = asyncio.Semaphore(MAX_THREADS)
-    results = {"http": [], "https": [], "socks4": [], "socks5": []}
 
-    async def try_validate(proto, proxy):
-        if proto == "http":
-            return await test_http(proxy)
-        elif proto == "https":
-            return await test_https(proxy)
-        elif proto == "socks4":
-            return await test_socks(proxy, 4)
-        elif proto == "socks5":
-            return await test_socks(proxy, 5)
-        return False
-
-    async def validate_one(proto, proxy):
-        async with semaphore:
-            for attempt in range(3):  # First try + 2 retries
-                ok = await try_validate(proto, proxy)
-                if ok:
-                    results[proto].append(proxy)
-                    print(f"{Fore.GREEN}[VALID] {proto.upper()} - {proxy} (try {attempt+1})")
+# === Validation (Safe Concurrency) ===
+async def validate_proxy(proxy, semaphore):
+    async with semaphore:
+        async def try_validate(test_func, proto_name):
+            for attempt in range(3):
+                if await test_func():
+                    await write_working(proxy, proto_name)
+                    print(f"{Fore.GREEN}[VALID] {proto_name.upper()} - {proxy} (try {attempt+1})")
                     return
-            print(f"{Fore.RED}[DEAD ] {proto.upper()} - {proxy} (after 3 tries)")
+            print(f"{Fore.RED}[DEAD ] {proto_name.upper()} - {proxy}")
 
-    tasks = []
-    for proto, proxies in proxies_by_type.items():
-        for proxy in proxies:
-            tasks.append(validate_one(proto, proxy))
+        await asyncio.gather(
+            try_validate(lambda: test_http(proxy), "http"),
+            try_validate(lambda: test_https(proxy), "https"),
+            try_validate(lambda: test_socks(proxy, 4), "socks4"),
+            try_validate(lambda: test_socks(proxy, 5), "socks5"),
+        )
 
+
+# === Main Orchestrator ===
+async def validate_all_combined(proxies_by_type):
+    all_proxies = set()
+    for proxies in proxies_by_type.values():
+        all_proxies.update(proxies)
+
+    semaphore = asyncio.Semaphore(GLOBAL_CONCURRENCY)
+    tasks = [validate_proxy(proxy, semaphore) for proxy in sorted(all_proxies)]
     await asyncio.gather(*tasks)
 
-    for proto, valid_list in results.items():
-        async with aiofiles.open(f"working_{proto}.txt", 'w') as f:
-            await f.write("\n".join(valid_list))
 
-    return results
-
-
+# === Main Entry ===
 async def main():
-    print(f"{Fore.MAGENTA}[+] Starting full proxy pipeline...")
+    print(f"{Fore.MAGENTA}[+] Starting full proxy pipeline with safety limit {GLOBAL_CONCURRENCY}...")
     proxies_by_type = await download_all()
-    await validate_all(proxies_by_type)
-
+    await validate_all_combined(proxies_by_type)
 
 if __name__ == "__main__":
     asyncio.run(main())
