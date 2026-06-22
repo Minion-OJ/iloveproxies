@@ -16,8 +16,8 @@ from aiohttp_socks import ProxyConnector
 # ---------------------------------------------------------------------------
 DEFAULT_TEST_URL = "http://httpbin.org/ip"
 FALLBACK_TEST_URL = "http://example.com"
-TIMEOUT_SECONDS = 8
-MAX_RETRIES = 2
+TIMEOUT_SECONDS = 5
+MAX_RETRIES = 1
 
 
 # ---------------------------------------------------------------------------

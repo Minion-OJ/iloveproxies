@@ -59,7 +59,7 @@ console = Console(force_terminal=True)
 # ---------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------
-BANNER = """
+BANNER = r"""
 [bold cyan]
   ____   ___   ____ _  __ ____  ____
  / ___| / _ \ / ___| |/ // ___|| ___|
@@ -299,7 +299,7 @@ def print_summary(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-async def main(concurrency: int = 150):
+async def main(concurrency: int = 50, limit: int = 500):
     print_banner()
     t0 = time.perf_counter()
 
@@ -331,6 +331,7 @@ async def main(concurrency: int = 150):
         )
 
     all_proxies = github_proxies | web_proxies
+    total_collected = len(all_proxies)
 
     console.print(
         f"\n  [bold green]✓[/bold green] GitHub lists:  "
@@ -342,8 +343,18 @@ async def main(concurrency: int = 150):
     )
     console.print(
         f"  [bold green]✓[/bold green] Combined:      "
-        f"[bold white]{len(all_proxies):,}[/bold white] unique proxies\n"
+        f"[bold white]{total_collected:,}[/bold white] unique proxies"
     )
+
+    # Apply limit — pick a random sample if we have more than the limit
+    if limit > 0 and len(all_proxies) > limit:
+        import random
+        all_proxies = set(random.sample(sorted(all_proxies), limit))
+        console.print(
+            f"  [bold yellow]✂[/bold yellow] Limited to:    "
+            f"[bold white]{limit:,}[/bold white] proxies for validation"
+        )
+    console.print()
 
     if not all_proxies:
         console.print(
@@ -375,7 +386,7 @@ async def main(concurrency: int = 150):
     filepath = save_results(working)
     elapsed = time.perf_counter() - t0
 
-    print_summary(len(all_proxies), total_tested, working, elapsed, filepath)
+    print_summary(total_collected, total_tested, working, elapsed, filepath)
 
 
 # ---------------------------------------------------------------------------
@@ -389,15 +400,21 @@ def cli():
     parser.add_argument(
         "-c", "--concurrency",
         type=int,
-        default=150,
-        help="Max concurrent validation connections (default: 150)",
+        default=50,
+        help="Max concurrent validation connections (default: 50)",
+    )
+    parser.add_argument(
+        "-l", "--limit",
+        type=int,
+        default=500,
+        help="Max proxies to validate. 0 = no limit (default: 500)",
     )
     args = parser.parse_args()
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    asyncio.run(main(concurrency=args.concurrency))
+    asyncio.run(main(concurrency=args.concurrency, limit=args.limit))
 
 
 if __name__ == "__main__":
