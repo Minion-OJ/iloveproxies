@@ -10,7 +10,7 @@ Phase 4 → Save working proxies + print summary
 
 Usage:
     python socks5_hunter.py
-    python socks5_hunter.py --concurrency 200 --timeout 10
+    python socks5_hunter.py --concurrency 200
 ═══════════════════════════════════════════════════════════════════════════
 """
 
@@ -20,8 +20,17 @@ import os
 import sys
 import time
 
-from rich.console import Console
+# Enable VT100 escape sequences on Windows cmd.exe
+if sys.platform == "win32":
+    os.system("")  # triggers ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    # Ensure Python I/O uses UTF-8 on Windows
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+from rich import box
+from rich.console import Console, Group
 from rich.live import Live
+from rich.padding import Padding
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -33,7 +42,6 @@ from rich.progress import (
 )
 from rich.table import Table
 from rich.text import Text
-from rich import box
 
 from sources.github_lists import fetch_all as github_fetch
 from sources.web_scraper import scrape_all as web_scrape
@@ -45,23 +53,22 @@ from validator import validate_batch, ProxyResult
 OUTPUT_DIR = "output"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "working_socks5.txt")
 
-console = Console()
+console = Console(force_terminal=True)
 
 
 # ---------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------
-BANNER = r"""
+BANNER = """
 [bold cyan]
- ███████╗ ██████╗  ██████╗██╗  ██╗███████╗███████╗
- ██╔════╝██╔═══██╗██╔════╝██║ ██╔╝██╔════╝██╔════╝
- ███████╗██║   ██║██║     █████╔╝ ███████╗███████╗
- ╚════██║██║   ██║██║     ██╔═██╗ ╚════██║╚════██║
- ███████║╚██████╔╝╚██████╗██║  ██╗███████║███████║
- ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝
+  ____   ___   ____ _  __ ____  ____
+ / ___| / _ \ / ___| |/ // ___|| ___|
+ \___ \| | | | |   | ' / \___ \|___ \
+  ___) | |_| | |___| . \  ___) |___) |
+ |____/ \___/ \____|_|\_\|____/|____/
 [/bold cyan]
-[bold white]         ⚡ SOCKS5 PROXY HUNTER ⚡[/bold white]
-[dim]   ProxyBroker × iloveproxies — Combined Engine[/dim]
+[bold white]       >> SOCKS5 PROXY HUNTER <<[/bold white]
+[dim]   ProxyBroker x iloveproxies -- Combined Engine[/dim]
 """
 
 
@@ -101,7 +108,13 @@ async def phase_validate(
     proxies: set[str],
     concurrency: int,
     console: Console,
-) -> list[ProxyResult]:
+) -> tuple[list[ProxyResult], int]:
+    """
+    Validate proxies and display live progress.
+
+    Returns:
+        Tuple of (list of working ProxyResult, total number tested).
+    """
     working: list[ProxyResult] = []
     tested = 0
     total = len(proxies)
@@ -114,16 +127,16 @@ async def phase_validate(
         pct = (tested / total * 100) if total > 0 else 0
 
         stats_text = Text()
-        stats_text.append(f"  Tested: ", style="bold white")
+        stats_text.append("  Tested: ", style="bold white")
         stats_text.append(f"{tested:,}", style="bold yellow")
         stats_text.append(f" / {total:,}\n", style="dim")
-        stats_text.append(f"  Alive:  ", style="bold white")
+        stats_text.append("  Alive:  ", style="bold white")
         stats_text.append(f"{len(working):,}", style="bold green")
         stats_text.append(f"  ({pct:.1f}% done)\n", style="dim")
-        stats_text.append(f"  Speed:  ", style="bold white")
+        stats_text.append("  Speed:  ", style="bold white")
         stats_text.append(f"{rate:.0f}", style="bold cyan")
-        stats_text.append(f" proxies/sec\n", style="dim")
-        stats_text.append(f"  Time:   ", style="bold white")
+        stats_text.append(" proxies/sec\n", style="dim")
+        stats_text.append("  Time:   ", style="bold white")
         stats_text.append(f"{elapsed:.0f}s", style="bold magenta")
 
         stats_panel = Panel(
@@ -148,8 +161,14 @@ async def phase_validate(
         table.add_column("Status", justify="center", width=8)
 
         display_proxies = working[-15:]  # last 15
-        for i, p in enumerate(display_proxies, start=max(1, len(working) - 14)):
-            latency_style = "green" if p.latency_ms < 2000 else "yellow" if p.latency_ms < 5000 else "red"
+        start_num = max(1, len(working) - 14)
+        for i, p in enumerate(display_proxies, start=start_num):
+            if p.latency_ms < 2000:
+                latency_style = "green"
+            elif p.latency_ms < 5000:
+                latency_style = "yellow"
+            else:
+                latency_style = "red"
             table.add_row(
                 str(i),
                 p.proxy,
@@ -160,15 +179,14 @@ async def phase_validate(
         # Progress bar
         bar_filled = int(pct / 2)
         bar_empty = 50 - bar_filled
-        bar = f"[cyan]{'█' * bar_filled}[/cyan][dim]{'░' * bar_empty}[/dim] {pct:.1f}%"
+        bar_text = f"[cyan]{'█' * bar_filled}[/cyan][dim]{'░' * bar_empty}[/dim] {pct:.1f}%"
 
-        from rich.columns import Columns
-        from rich.padding import Padding
-
-        return Padding(
-            Text.from_markup(f"\n{bar}\n\n"),
+        bar_renderable = Padding(
+            Text.from_markup(f"\n{bar_text}\n"),
             (0, 2),
-        ), stats_panel, table
+        )
+
+        return Group(bar_renderable, stats_panel, table)
 
     async def on_result(result: ProxyResult):
         nonlocal tested
@@ -184,25 +202,21 @@ async def phase_validate(
         )
 
         while not val_task.done():
-            bar, stats, table = make_layout()
-            from rich.console import Group
-            live.update(Group(bar, stats, table))
+            live.update(make_layout())
             await asyncio.sleep(0.25)
 
         # Final update
-        bar, stats, table = make_layout()
-        from rich.console import Group
-        live.update(Group(bar, stats, table))
+        live.update(make_layout())
 
         await val_task  # propagate exceptions
 
-    return working
+    return working, tested
 
 
 # ---------------------------------------------------------------------------
 # Save results
 # ---------------------------------------------------------------------------
-def save_results(working: list[ProxyResult]):
+def save_results(working: list[ProxyResult]) -> str:
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # Sort by latency (fastest first)
@@ -218,9 +232,13 @@ def save_results(working: list[ProxyResult]):
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-def print_summary(total_collected: int, results: list[ProxyResult], elapsed: float, filepath: str):
-    working = [r for r in results if r.alive]
-
+def print_summary(
+    total_collected: int,
+    total_tested: int,
+    working: list[ProxyResult],
+    elapsed: float,
+    filepath: str,
+):
     console.print()
 
     summary = Table(
@@ -234,12 +252,11 @@ def print_summary(total_collected: int, results: list[ProxyResult], elapsed: flo
     summary.add_column("Value", style="bold", justify="right", width=20)
 
     summary.add_row("Total Collected", f"[yellow]{total_collected:,}[/yellow]")
-    summary.add_row("Tested", f"[yellow]{len(results):,}[/yellow]")
+    summary.add_row("Tested", f"[yellow]{total_tested:,}[/yellow]")
     summary.add_row("Alive SOCKS5", f"[bold green]{len(working):,}[/bold green]")
-    summary.add_row(
-        "Success Rate",
-        f"[cyan]{len(working)/max(len(results),1)*100:.1f}%[/cyan]",
-    )
+
+    success_rate = len(working) / max(total_tested, 1) * 100
+    summary.add_row("Success Rate", f"[cyan]{success_rate:.1f}%[/cyan]")
 
     if working:
         avg_latency = sum(p.latency_ms for p in working) / len(working)
@@ -258,12 +275,15 @@ def print_summary(total_collected: int, results: list[ProxyResult], elapsed: flo
 
     if working:
         # Top 5 fastest
+        top5_lines = []
+        for i, p in enumerate(working[:5], 1):
+            top5_lines.append(
+                f"  [bold green]{i}.[/bold green] {p.proxy}  "
+                f"[cyan]({p.latency_ms:.0f}ms)[/cyan]"
+            )
         console.print(
             Panel(
-                "\n".join(
-                    f"  [bold green]{i}.[/bold green] {p.proxy}  [cyan]({p.latency_ms:.0f}ms)[/cyan]"
-                    for i, p in enumerate(working[:5], 1)
-                ),
+                "\n".join(top5_lines),
                 title="[bold white]🏆 Top 5 Fastest Proxies[/bold white]",
                 border_style="green",
                 box=box.ROUNDED,
@@ -313,17 +333,22 @@ async def main(concurrency: int = 150):
     all_proxies = github_proxies | web_proxies
 
     console.print(
-        f"\n  [bold green]✓[/bold green] GitHub lists:  [bold yellow]{len(github_proxies):,}[/bold yellow] proxies"
+        f"\n  [bold green]✓[/bold green] GitHub lists:  "
+        f"[bold yellow]{len(github_proxies):,}[/bold yellow] proxies"
     )
     console.print(
-        f"  [bold green]✓[/bold green] Web scrapers:  [bold yellow]{len(web_proxies):,}[/bold yellow] proxies"
+        f"  [bold green]✓[/bold green] Web scrapers:  "
+        f"[bold yellow]{len(web_proxies):,}[/bold yellow] proxies"
     )
     console.print(
-        f"  [bold green]✓[/bold green] Combined:      [bold white]{len(all_proxies):,}[/bold white] unique proxies\n"
+        f"  [bold green]✓[/bold green] Combined:      "
+        f"[bold white]{len(all_proxies):,}[/bold white] unique proxies\n"
     )
 
     if not all_proxies:
-        console.print("[bold red]No proxies collected! Check your internet connection.[/bold red]")
+        console.print(
+            "[bold red]No proxies collected! Check your internet connection.[/bold red]"
+        )
         return
 
     # ── Phase 3: Validate ─────────────────────────────────────────────────
@@ -336,7 +361,7 @@ async def main(concurrency: int = 150):
         )
     )
 
-    working = await phase_validate(all_proxies, concurrency, console)
+    working, total_tested = await phase_validate(all_proxies, concurrency, console)
 
     # ── Phase 4: Save + Summary ───────────────────────────────────────────
     console.print(
@@ -350,9 +375,7 @@ async def main(concurrency: int = 150):
     filepath = save_results(working)
     elapsed = time.perf_counter() - t0
 
-    # Build a full results list for summary (we only have working proxies
-    # since dead ones are not stored, but we know the total)
-    print_summary(len(all_proxies), working, elapsed, filepath)
+    print_summary(len(all_proxies), total_tested, working, elapsed, filepath)
 
 
 # ---------------------------------------------------------------------------

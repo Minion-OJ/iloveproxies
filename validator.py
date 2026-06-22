@@ -40,7 +40,6 @@ async def _test_one(proxy: str) -> ProxyResult:
     Retries up to MAX_RETRIES times. Returns a ProxyResult.
     """
     for attempt in range(1, MAX_RETRIES + 1):
-        connector = None
         try:
             connector = ProxyConnector.from_url(f"socks5://{proxy}")
             timeout = aiohttp.ClientTimeout(total=TIMEOUT_SECONDS)
@@ -58,9 +57,6 @@ async def _test_one(proxy: str) -> ProxyResult:
                         )
         except Exception:
             pass
-        finally:
-            if connector:
-                await connector.close()
 
     return ProxyResult(proxy=proxy, alive=False, latency_ms=-1)
 
@@ -82,7 +78,7 @@ async def validate_batch(
         on_result: Optional async callable(ProxyResult) called as each proxy is checked.
 
     Returns:
-        List of ProxyResult for every proxy tested.
+        List of ProxyResult for every proxy tested (both alive and dead).
     """
     semaphore = asyncio.Semaphore(concurrency)
     results: list[ProxyResult] = []
